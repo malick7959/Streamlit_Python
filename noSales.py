@@ -28,7 +28,7 @@ def get_data():
     INNER JOIN deliverydays d ON d.id = zo.deliveryday_id
     INNER JOIN sales sa on sa.point_of_sale_id = p.id
     WHERE p.status = 'Activate' 
-      AND zone LIKE '%Kaolack%'
+      AND zone LIKE ('%Louga%')
     GROUP BY name, qr_code, address, phone, secteur, zone, region, golden_shop, lat, lng, cluster, 
              zo.libelle, d.day, p.status
     """
@@ -39,132 +39,104 @@ def get_data():
     return pdv
 
 # Chargement des données
-pdv = get_data()
+@st.cache_data
+def load_data():
+    return get_data()
 
-# Transformation des données
+# Nettoyage des données
 @st.cache_data
 def clean_data(pdv):
-    # Vérification de la validité des dates dans 'max'
-    def safe_to_datetime(date_str):
-        try:
-            return pd.to_datetime(date_str, errors='raise')
-        except Exception as e:
-            return pd.NaT
-
-    # Appliquer la conversion en datetime sur la colonne 'max' avec gestion des erreurs
-    pdv['max'] = pdv['max'].apply(safe_to_datetime)
-
-    # Vérification des lignes invalides après conversion
-    nat_rows = pdv[pdv['max'].isna()]
-    if not nat_rows.empty:
-        st.warning(f"Certaines dates dans la colonne 'max' n'ont pas pu être converties en datetime.")
-        st.write(nat_rows[['name', 'max']])
-
-    # Remplacer les NaT par la date du jour
-    today = datetime.date.today()
-    pdv['max'].fillna(pd.to_datetime(today), inplace=True)
-
+    pdv['max'] = pd.to_datetime(pdv['max'], errors='coerce')
+    pdv['max'].fillna(pd.to_datetime(datetime.date.today()), inplace=True)
     pdv['lat'] = pd.to_numeric(pdv['lat'], errors='coerce')
     pdv['lng'] = pd.to_numeric(pdv['lng'], errors='coerce')
-
-    # Supprimer les lignes avec des latitudes ou longitudes manquantes
-    pdv = pdv.dropna(subset=['lat', 'lng'])
-    
-    return pdv
-
-pdv = clean_data(pdv)
+    pdv['Remarque'] = ""  # Ajout de la colonne Remarque
+    return pdv.dropna(subset=['lat', 'lng'])
 
 # Interface Streamlit
 st.title("📊 Gestion du Referentiel des PDV")
 
-# Bouton de rafraîchissement
-if st.button("🔄 Actualiser"):
-    st.rerun()
+# Actualisation des données
+refresh_button = st.button("🔄 Actualiser les données")
+if refresh_button:
+    pdv = load_data()
+    pdv = clean_data(pdv)
+    st.success("Données actualisées avec succès!")
+else:
+    pdv = load_data()
+    pdv = clean_data(pdv)
 
-# Barre de recherche QR Code
-recherche = st.text_input("🔍 Rechercher un QR Code :", "")
-
-# Filtres latéraux
+# Filtrage des données
 st.sidebar.header("🔽 Filtres")
-
-select_status = st.sidebar.radio("📌 Status Pdv", options=pdv['status'].unique())
 select_region = st.sidebar.selectbox("🌍 Région", options=pdv["region"].unique())
 select_zone = st.sidebar.multiselect("📍 Zone", options=pdv["zone"].unique(), default=pdv["zone"].unique())
 select_secteur = st.sidebar.multiselect("🏬 Secteur", options=pdv["secteur"].unique(), default=pdv["secteur"].unique())
-select_cluster = st.sidebar.multiselect("🔗 Cluster", options=pdv["cluster"].unique(), default=pdv["cluster"].unique())
-select_jour = st.sidebar.multiselect("📅 Jour", options=pdv["day"].unique(), default=pdv["day"].unique())
+date_slider = st.sidebar.slider("📅 Plage de dates", min_value=pdv["max"].min().date(), max_value=pdv["max"].max().date(), value=(pdv["max"].min().date(), pdv["max"].max().date()))
+select_day = st.sidebar.multiselect("🗓️ Sélectionner le(s) jour(s)", options=pdv["day"].unique(), default=pdv["day"].unique())
 
-# Sélecteur de plage de dates
-date_slider = st.sidebar.slider(
-    "📅 Sélectionner une plage de dates", 
-    min_value=pdv["max"].min().date(), 
-    max_value=pdv["max"].max().date(), 
-    value=(pdv["max"].min().date(), pdv["max"].max().date())
-)
+# Filtrage par jours sélectionnés
+pdv = pdv[pdv["day"].isin(select_day)]
 
-# Filtrage par la plage de dates sélectionnée
+# Filtrage par les dates
 pdv = pdv[(pdv["max"].dt.date >= date_slider[0]) & (pdv["max"].dt.date <= date_slider[1])]
 
-# Application des autres filtres
-pdv_select = pdv.query(
-    "status == @select_status & region == @select_region & zone == @select_zone & secteur == @select_secteur & cluster == @select_cluster & day == @select_jour"
+# Filtrage par la région, zone et secteur
+if select_region:
+    pdv = pdv[pdv["region"] == select_region]
+if select_zone:
+    pdv = pdv[pdv["zone"].isin(select_zone)]
+if select_secteur:
+    pdv = pdv[pdv["secteur"].isin(select_secteur)]
+
+# Affichage des KPIs (métriques)
+st.metric("📌 Nombre total de PDV", len(pdv))
+
+# Affichage du tableau interactif avec Remarque éditable
+st.write("### 📋 Liste des Points de Vente")
+edited_pdv = st.data_editor(
+    pdv[['name', 'qr_code', 'address', 'phone', 'secteur', 'zone', 'region', 'libelle', 'day', 'max', 'lat', 'lng', 'Remarque']],
+    column_config={
+        "Remarque": st.column_config.TextColumn()
+    },
+    disabled=["name", "qr_code", "address", "phone", "secteur", "zone", "region", "libelle", "day", "max", "lat", "lng"],
+    num_rows="dynamic"
 )
 
-# Recherche QR Code
-if recherche:
-    pdv_select = pdv_select[pdv_select["qr_code"].str.contains(recherche, case=False, na=False)]
-
-# Affichage des KPIs
-st.metric("📌 Nombre total de PDV", len(pdv_select))
-
-# Affichage du tableau filtré
-st.write(f"### 📋 Liste des point de ventes et leur date de dernier Sales")
-st.dataframe(pdv_select[['name', 'qr_code', 'address', 'phone', 'secteur', 'zone', 'region', 'libelle', 'day', 'max']])
-
-# Fonction pour télécharger en Excel
+# Fonction pour convertir le DataFrame en fichier Excel
 def to_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="PDV", index=False)
-    return output.getvalue()
+    """Convertit un DataFrame Pandas en fichier Excel pour le téléchargement."""
+    towrite = BytesIO()
+    with pd.ExcelWriter(towrite, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Points_de_Vente')
+    return towrite.getvalue()
 
-# Bouton de téléchargement
+# Ajout du bouton de téléchargement
 st.download_button(
-    label="📥 Télécharger les données",
-    data=to_excel(pdv_select),
-    file_name="PDV_Kaolack.xlsx",
+    label="📥 Télécharger les données en Excel",
+    data=to_excel(edited_pdv),
+    file_name="points_de_vente.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-# Carte interactive avec marqueurs pour dates "max" non correspondantes à l'année en cours
-st.write("### 🗺️ Visualisation des Points de Vente")
-st.caption("Remarque : Les Icones en Blanc montre que le pdv n'a pas enregistres de ventes cette annee suffit de glisser la page de date pour les identifier")
-
-if pdv_select.empty:
-    st.error("Aucun point de vente à afficher pour les filtres sélectionnés.")
-else:
-    # Créer la carte centrée autour de la moyenne des latitudes et longitudes des points de vente
-    m = folium.Map(location=[pdv_select["lat"].mean(), pdv_select["lng"].mean()], zoom_start=10, tiles="CartoDB dark_matter")
-
-    # Définir les couleurs en fonction des jours de la semaine
+# Affichage de la carte
+st.write("### 🗺️ Carte des Points de Vente")
+if not edited_pdv.empty:
+    m = folium.Map(location=[edited_pdv["lat"].mean(), edited_pdv["lng"].mean()], zoom_start=10, tiles="CartoDB dark_matter")
     jour_colors = {
         "Lundi": "red", "Mardi": "blue", "Mercredi": "green", "Jeudi": "yellow",
         "Vendredi": "purple", "Samedi": "orange", "Dimanche": "gray"
     }
-
-    # Obtenir l'année actuelle
     current_year = datetime.datetime.now().year
-
-    # Ajouter des markers avec des icônes personnalisées
-    for _, row in pdv_select.iterrows():
-        # Vérifier si l'année de la date "max" ne correspond pas à l'année en cours
+    for _, row in edited_pdv.iterrows():
+        # Vérification si le point de vente a été visité cette année
         if row['max'].year != current_year:
-            icon_color = "white"  # Marqueur pour dates max non correspondantes
-            icon = "times-circle"  # Icône de croix rouge
+            icon_color = "white"
+            icon = "times-circle"  # Crois rouge pour les non-visités
         else:
             icon_color = jour_colors.get(row['day'], "gray")
-            icon = "info-sign"
-
+            icon = "info-sign"  # Icône info pour les visités cette année
+        
+        # Création du popup HTML avec style
         popup_html = f"""
         <div style="background-color: {icon_color}; padding: 10px; border-radius: 5px; color: black; text-align: center;">
             <b>{row['name']}</b><br>
@@ -177,15 +149,15 @@ else:
         </div>
         """
 
-        # Créer une icône avec une bordure et une couleur dynamique
+        # Création du style de l'icône
         icon_style = {
-            "iconColor": "red",  # Couleur de l'icône
+            "iconColor": "red" if icon == "times-circle" else icon_color,  # Crois rouge pour non-visités
             "color": icon_color,   # Couleur de fond de l'icône
             "icon": icon,          # Icône Font Awesome
             "prefix": "fa"         # Utiliser Font Awesome pour l'icône
         }
 
-        # Ajouter le marqueur avec une icône personnalisée
+        # Ajouter le marqueur avec l'icône personnalisée
         folium.Marker(
             location=[row["lat"], row["lng"]],
             popup=folium.Popup(popup_html, max_width=300),
@@ -193,5 +165,7 @@ else:
             icon=folium.Icon(**icon_style)  # Appliquer les styles à l'icône
         ).add_to(m)
 
-    # Afficher la première carte dans Streamlit
+    # Affichage de la carte
     folium_static(m)
+else:
+    st.warning("Aucun point de vente disponible avec les filtres sélectionnés.")
