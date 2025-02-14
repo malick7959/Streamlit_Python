@@ -118,7 +118,7 @@ if recherche:
 st.metric("📌 Nombre total de PDV", len(pdv_select))
 
 # Affichage du tableau filtré
-st.write(f"### 📋 Points de Vente avec des ventes effectuées entre {date_slider[0]} et {date_slider[1]}")
+st.write(f"### 📋 Liste des point de ventes et leur date de dernier Sales")
 st.dataframe(pdv_select[['name', 'qr_code', 'address', 'phone', 'secteur', 'zone', 'region', 'libelle', 'day', 'max']])
 
 # Fonction pour télécharger en Excel
@@ -138,6 +138,7 @@ st.download_button(
 
 # Carte interactive avec marqueurs pour dates "max" non correspondantes à l'année en cours
 st.write("### 🗺️ Visualisation des Points de Vente")
+st.caption("Remarque : Les Icones en Blanc montre que le pdv n'a pas enregistres de ventes cette annee suffit de glisser la page de date pour les identifier")
 
 if pdv_select.empty:
     st.error("Aucun point de vente à afficher pour les filtres sélectionnés.")
