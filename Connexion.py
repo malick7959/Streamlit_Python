@@ -43,5 +43,4 @@ TCD = df.pivot_table(values='can', index='region',aggfunc= 'sum')
 # Fermeture de connexion apres avoir recuperer les donnees 
 
 connexion.close()
-
-df.head().to_csv('can_head.csv', index=False)
+print(df.head())

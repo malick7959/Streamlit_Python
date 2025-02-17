@@ -1,26 +1,66 @@
+# ------ TRAITEMENT DE DONNEES SOUS PYTHONS DATA PROCESSING ------#
+
+# importation des librairies
+
 import pandas as pd
-from sqlalchemy import create_engine
+import psycopg2 as pg2
+import numpy as np
 
-def get_data():
-    # Créer une connexion SQLAlchemy
-    engine = create_engine('postgresql://malick.diouf:nA@8q9WMdNCpPH@leuk.laiterieduberger.sn:5432/leuk_webapp_production')
+def extract_data():
+    
+# ------ Extraction des donnees depuis Postgres, excel, csv, etc ------#
 
-    # Données Can
-    can = pd.read_sql("""
-        SELECT * FROM can('2025-02-01', '2025-02-28')
-        WHERE code_produits LIKE '%DSP%'
-    """, engine)
+    print("Extraction des donnees en cours...")
 
-    # Données zonage
-    zonage = pd.read_sql("SELECT * FROM zonage()", engine)
+    # Paramètres de connexion
 
-    # Données pilier
-    pilier = pd.read_sql("SELECT * FROM pilier_Leuk()", engine)
+    connexions = pg2.connect(
+        dbname="leuk_webapp_production",
+        user="malick.diouf",
+        password="nA@8q9WMdNCpPH",  
+        host="leuk.laiterieduberger.sn",
+        port="5432"
+    )
 
-    return can, pilier, zonage
-can, pilier, zonage= get_data()
+    # Récupération des données
 
-# Enregistrer les premières lignes des DataFrames dans des fichiers CSV
-can.head().to_csv('can_head.csv', index=False)
-pilier.head().to_csv('pilier_head.csv', index=False)
-zonage.head().to_csv('zonage_head.csv', index=False)
+    zonage = pd.read_sql("select * from zonage();", connexions)
+    
+    pilier = pd.read_sql("select * from pilier_Leuk();", connexions)
+    
+    can = pd.read_sql("select * from can('2025-01-01','2025-01-31');", connexions)
+    
+    # Fermeture de la connexion
+
+    connexions.close()
+    
+    catalogue = pd.read_excel("Catalogue.xlsx")
+    
+    print("Extraction des donnees terminee.")
+    
+    return can, zonage, pilier, catalogue
+
+# ------- Transformation des donnees -------#
+def transform_data(can,zonage,pilier,catalogue):
+        
+        print("Transformation des donnees en cours...")
+        
+        # Renomer les colonnes 
+        zonage = zonage.rename(columns={'Secteur':'secteur'})
+        pilier =pilier.rename(columns={'sku_commcare':'code_produits'})
+        
+        # Jointure des donnees
+        df = pd.merge(left=can, right=zonage, how= "inner", on= "secteur")
+        df = pd.merge(left=df, right=pilier, how= "inner", on= "code_produits")
+        
+        # Conversion de la colonne date en datetime
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # Ajout de la colonne mois
+        df['mois'] = df['date'].dt.month
+        
+        # Ajout de la colonne CAHT
+        df['CAHT'] =np.where(df['pilier'] == 'LF', df["can"], df['can']/1.18)
+        
+
+
