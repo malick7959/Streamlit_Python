@@ -28,7 +28,7 @@ def get_data():
     INNER JOIN deliverydays d ON d.id = zo.deliveryday_id
     INNER JOIN sales sa on sa.point_of_sale_id = p.id
     WHERE p.status = 'Activate' 
-      AND zone LIKE ('%Dakar proxy 4%')
+      AND zone LIKE ('%Dakar proxy 5%')
     GROUP BY name, qr_code, address, phone, secteur, zone, region, golden_shop, lat, lng, cluster, 
              zo.libelle, d.day, p.status
     """
